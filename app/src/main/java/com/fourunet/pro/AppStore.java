@@ -722,6 +722,74 @@ class AppStore {
         return new SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.US).format(new Date());
     }
 
+
+    static JSONObject exportBackupJson(Context c) throws Exception {
+        JSONObject root = new JSONObject();
+        root.put("app", "ONLINE");
+        root.put("backupVersion", 1);
+        root.put("createdAt", now());
+        root.put("networkName", getNetworkName(c));
+
+        JSONObject settings = new JSONObject();
+        settings.put(KEY_NETWORK_NAME, getNetworkName(c));
+        settings.put(KEY_ADMIN_PHONE, getAdminPhone(c));
+        settings.put(KEY_AUTO_SEND, isAutoSendEnabled(c));
+        settings.put(KEY_SUCCESS_TEMPLATE, getSuccessTemplate(c));
+        settings.put(KEY_NO_STOCK_TEMPLATE, getNoStockTemplate(c));
+        settings.put("serialNumber", getSerialNumber(c));
+        settings.put("deviceId", getDeviceId(c));
+        root.put("settings", settings);
+
+        root.put(KEY_CATEGORIES, new JSONArray(prefs(c).getString(KEY_CATEGORIES, "[]")));
+        root.put(KEY_CARDS, new JSONArray(prefs(c).getString(KEY_CARDS, "[]")));
+        root.put(KEY_LOGS, new JSONArray(prefs(c).getString(KEY_LOGS, "[]")));
+        root.put(KEY_TRUSTED, new JSONArray(prefs(c).getString(KEY_TRUSTED, "[]")));
+
+        JSONArray processed = new JSONArray();
+        for (String item : loadProcessed(c)) processed.put(item);
+        root.put(KEY_PROCESSED, processed);
+        return root;
+    }
+
+    static String buildBackupFileName(Context c) {
+        String name = getNetworkName(c);
+        name = name.replaceAll("[^A-Za-z0-9_\\-\\u0600-\\u06FF]", "_");
+        if (name.trim().isEmpty()) name = "ONLINE";
+        return "ONLINE_backup_" + name + "_" + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date()) + ".json";
+    }
+
+    static void restoreBackupJson(Context c, String jsonText) throws Exception {
+        JSONObject root = new JSONObject(jsonText == null ? "" : jsonText);
+        SharedPreferences.Editor editor = prefs(c).edit();
+
+        JSONObject settings = root.optJSONObject("settings");
+        if (settings != null) {
+            if (settings.has(KEY_NETWORK_NAME)) editor.putString(KEY_NETWORK_NAME, formatNetworkName(settings.optString(KEY_NETWORK_NAME, DEFAULT_NETWORK_NAME)));
+            if (settings.has(KEY_ADMIN_PHONE)) editor.putString(KEY_ADMIN_PHONE, settings.optString(KEY_ADMIN_PHONE, DEFAULT_ADMIN_PHONE));
+            if (settings.has(KEY_AUTO_SEND)) editor.putBoolean(KEY_AUTO_SEND, settings.optBoolean(KEY_AUTO_SEND, true));
+            if (settings.has(KEY_SUCCESS_TEMPLATE)) editor.putString(KEY_SUCCESS_TEMPLATE, settings.optString(KEY_SUCCESS_TEMPLATE, DEFAULT_SUCCESS_TEMPLATE));
+            if (settings.has(KEY_NO_STOCK_TEMPLATE)) editor.putString(KEY_NO_STOCK_TEMPLATE, settings.optString(KEY_NO_STOCK_TEMPLATE, DEFAULT_NO_STOCK_TEMPLATE));
+        }
+
+        JSONArray categories = root.optJSONArray(KEY_CATEGORIES);
+        JSONArray cards = root.optJSONArray(KEY_CARDS);
+        JSONArray logs = root.optJSONArray(KEY_LOGS);
+        JSONArray trusted = root.optJSONArray(KEY_TRUSTED);
+        JSONArray processed = root.optJSONArray(KEY_PROCESSED);
+
+        if (categories != null) editor.putString(KEY_CATEGORIES, categories.toString());
+        if (cards != null) editor.putString(KEY_CARDS, cards.toString());
+        if (logs != null) editor.putString(KEY_LOGS, logs.toString());
+        if (trusted != null) editor.putString(KEY_TRUSTED, trusted.toString());
+        if (processed != null) {
+            HashSet<String> set = new HashSet<>();
+            for (int i = 0; i < processed.length(); i++) set.add(processed.optString(i));
+            editor.putStringSet(KEY_PROCESSED, set);
+        }
+        editor.apply();
+        ensureDefaultCategories(c);
+    }
+
     static void clearAll(Context c) {
         prefs(c).edit().clear().apply();
         ensureDefaultCategories(c);

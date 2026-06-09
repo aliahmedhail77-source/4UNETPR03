@@ -10,7 +10,7 @@ android {
         applicationId 'com.fourunet.pro'
         minSdk 23
         targetSdk 35
-        versionCode 9
-        versionName '9.0-no-license'
+        versionCode 12
+        versionName '12.0-backup-restore-category-ui'
     }
 }

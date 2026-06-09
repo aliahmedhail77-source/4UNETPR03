@@ -42,6 +42,8 @@ import org.json.JSONObject;
 public class MainActivity extends Activity {
     private static final int REQ_FILE = 20;
     private static final int REQ_PDF = 30;
+    private static final int REQ_BACKUP_SAVE = 40;
+    private static final int REQ_BACKUP_RESTORE = 41;
 
     LinearLayout root;
     LinearLayout content;
@@ -498,6 +500,26 @@ public class MainActivity extends Activity {
         box.addView(actions);
         return box;
     }
+    private Button categoryChoiceButton(CategoryItem c) {
+        boolean selected = c.amount == selectedAmount;
+        int bgColor = selected ? Color.rgb(74, 55, 126) : card2;
+        int borderColor = selected ? purpleLight : Color.argb(70, 255, 255, 255);
+        int fgColor = selected ? Color.WHITE : text;
+        Button b = new Button(this);
+        b.setText(c.amount + " ريال");
+        b.setTextColor(fgColor);
+        b.setTextSize(16);
+        b.setTypeface(appTypeface(true));
+        b.setAllCaps(false);
+        b.setGravity(Gravity.CENTER);
+        b.setBackground(round(bgColor, dp(16), borderColor, selected ? dp(2) : dp(1)));
+        b.setOnClickListener(v -> {
+            selectedAmount = c.amount;
+            showImport();
+        });
+        return b;
+    }
+
 
     private void showCategories() {
         setTab("categories");
@@ -575,7 +597,7 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("حذف الفئة")
                 .setMessage("سيتم حذف الفئة من القائمة فقط، ولن يتم حذف الكروت المخزنة إلا إذا حذفتها يدويًا.")
-                .setPositiveButton("حذف", (d,w) -> { AppStore.deleteCategory(this, c); showCategories(); })
+                .setPositiveButton("موافق، حذف", (d,w) -> { AppStore.deleteCategory(this, c); showCategories(); })
                 .setNegativeButton("إلغاء", null)
                 .show();
     }
@@ -606,10 +628,19 @@ public class MainActivity extends Activity {
             if (item.sold) box.addView(small("أرسل إلى: " + item.buyerPhone + "\nالوقت: " + item.soldAt));
             LinearLayout actions = new LinearLayout(this); actions.setOrientation(LinearLayout.HORIZONTAL);
             actions.addView(action("تعديل", purple, Color.WHITE, v -> showCardEditDialog(item)), new LinearLayout.LayoutParams(0, -2, 1));
-            actions.addView(action("حذف", Color.rgb(82,30,42), Color.WHITE, v -> { AppStore.deleteCard(this, item.id); showCardsForCategory(c); }), new LinearLayout.LayoutParams(0, -2, 1));
+            actions.addView(action("حذف", Color.rgb(82,30,42), Color.WHITE, v -> confirmDeleteCard(item, c)), new LinearLayout.LayoutParams(0, -2, 1));
             box.addView(actions);
             content.addView(box);
         }
+    }
+
+    private void confirmDeleteCard(CardItem item, CategoryItem c) {
+        new AlertDialog.Builder(this)
+                .setTitle("تأكيد حذف الكرت")
+                .setMessage("هل تريد حذف هذا الكرت؟\n\n" + item.code + "\n\nلن يمكن التراجع عن الحذف إلا إذا كانت لديك نسخة احتياطية.")
+                .setPositiveButton("موافق، حذف", (d,w) -> { AppStore.deleteCard(this, item.id); showCardsForCategory(c); })
+                .setNegativeButton("إلغاء", null)
+                .show();
     }
 
     private void showCardEditDialog(CardItem card) {
@@ -641,16 +672,31 @@ public class MainActivity extends Activity {
 
         LinearLayout picker = cardBox();
         picker.addView(tv("اختر الفئة", 17, text, true));
+        picker.addView(small("اختر الفئة التي تريد إضافة الكروت إليها. الفئة المختارة تظهر بإطار بنفسجي واضح."));
         ArrayList<CategoryItem> cats = AppStore.loadCategories(this);
-        String[] labels = new String[cats.size()];
-        for (int i = 0; i < cats.size(); i++) labels[i] = String.valueOf(cats.get(i).amount);
-        Spinner spinner = new Spinner(this);
-        spinner.setAdapter(new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, labels));
-        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
-            public void onItemSelected(AdapterView<?> p, View v, int pos, long id) { selectedAmount = Integer.parseInt(labels[pos]); }
-            public void onNothingSelected(AdapterView<?> p) {}
-        });
-        picker.addView(spinner);
+        if (!cats.isEmpty()) {
+            boolean foundSelected = false;
+            for (CategoryItem cat : cats) if (cat.amount == selectedAmount) foundSelected = true;
+            if (!foundSelected) selectedAmount = cats.get(0).amount;
+        }
+        LinearLayout row = null;
+        int col = 0;
+        for (CategoryItem cat : cats) {
+            if (col == 0) {
+                row = new LinearLayout(this);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                picker.addView(row);
+            }
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(58), 1);
+            lp.setMargins(dp(4), dp(6), dp(4), dp(6));
+            row.addView(categoryChoiceButton(cat), lp);
+            col++;
+            if (col == 2) col = 0;
+        }
+        TextView chosen = tv("الفئة المختارة: " + selectedAmount + " ريال", 15, purpleLight, true);
+        chosen.setGravity(Gravity.CENTER);
+        chosen.setPadding(0, dp(8), 0, 0);
+        picker.addView(chosen);
         content.addView(picker);
 
         LinearLayout ops = cardBox();
@@ -733,7 +779,7 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("حذف إشعار السداد")
                 .setMessage("سيتم حذف الإشعار من السجل فقط، ولن يتم إرجاع الكرت إلى المتاح.")
-                .setPositiveButton("حذف", (d,w) -> { AppStore.deleteLog(this, log.id); showLogs(); })
+                .setPositiveButton("موافق، حذف", (d,w) -> { AppStore.deleteLog(this, log.id); showLogs(); })
                 .setNegativeButton("إلغاء", null)
                 .show();
     }
@@ -742,7 +788,7 @@ public class MainActivity extends Activity {
         new AlertDialog.Builder(this)
                 .setTitle("حذف كل إشعارات السداد")
                 .setMessage("سيتم حذف سجلات العمليات فقط. الكروت المباعة ستبقى مباعة حتى لا يحدث تكرار بيع.")
-                .setPositiveButton("حذف", (d,w) -> { AppStore.clearLogs(this); showLogs(); })
+                .setPositiveButton("موافق، حذف", (d,w) -> { AppStore.clearLogs(this); showLogs(); })
                 .setNegativeButton("إلغاء", null)
                 .show();
     }
@@ -947,12 +993,21 @@ public class MainActivity extends Activity {
         trusted.addView(action("فتح إدارة المحافظ", purple, Color.WHITE, v -> showTrustedContacts()));
         content.addView(trusted);
 
+
+        LinearLayout backup = cardBox();
+        backup.addView(tv("النسخ الاحتياطي والاستعادة", 17, text, true));
+        backup.addView(small("احفظ نسخة احتياطية كاملة قبل حذف التطبيق أو تحديثه. تشمل الكروت، الفئات، السجلات، المحافظ، الرسائل، اسم الشبكة، رقم الإدارة، وإعدادات الإرسال التلقائي."));
+        backup.addView(action("حفظ نسخة احتياطية كاملة", Color.rgb(50, 90, 72), Color.WHITE, v -> openBackupSave()));
+        backup.addView(action("استعادة نسخة احتياطية من ملف", purple, Color.WHITE, v -> openBackupRestore()));
+        backup.addView(small("الاستعادة تستبدل البيانات الحالية ببيانات ملف النسخة؛ لذلك تظهر رسالة تأكيد قبل التنفيذ."));
+        content.addView(backup);
+
         LinearLayout danger = cardBox();
         danger.addView(tv("حذف البيانات", 17, text, true));
         danger.addView(action("حذف كل البيانات", Color.rgb(82,30,42), Color.WHITE, v -> new AlertDialog.Builder(this)
                 .setTitle("تأكيد")
-                .setMessage("هل تريد حذف كل البيانات؟")
-                .setPositiveButton("نعم", (d,w) -> { AppStore.clearAll(this); AppStore.ensureDefaultCategories(this); buildLayout(); showHome(); })
+                .setMessage("هل تريد حذف كل البيانات؟\n\nيفضل حفظ نسخة احتياطية قبل المتابعة.")
+                .setPositiveButton("موافق، حذف", (d,w) -> { AppStore.clearAll(this); AppStore.ensureDefaultCategories(this); buildLayout(); showHome(); })
                 .setNegativeButton("إلغاء", null)
                 .show()));
         content.addView(danger);
@@ -1173,13 +1228,23 @@ public class MainActivity extends Activity {
             box.addView(small("كلمات التعرف: " + (contact.senderKeywords == null || contact.senderKeywords.trim().isEmpty() ? contact.walletName : contact.senderKeywords)
                     + "\nالاسم الثلاثي: " + contact.tripleName
                     + "\nرقم استلام الكرت: " + contact.phone));
-            box.addView(action("حذف", Color.rgb(82,30,42), Color.WHITE, v -> { AppStore.deleteTrustedContact(this, contact.id); showTrustedContacts(); }));
+            box.addView(action("حذف", Color.rgb(82,30,42), Color.WHITE, v -> confirmDeleteTrustedContact(contact)));
             content.addView(box);
         }
 
         LinearLayout back = cardBox();
         back.addView(action("رجوع للإعدادات", card2, text, v -> showSettings()));
         content.addView(back);
+    }
+
+    private void confirmDeleteTrustedContact(TrustedContact contact) {
+        String name = (contact.walletName == null ? "" : contact.walletName) + " - " + (contact.fullName == null ? "" : contact.fullName);
+        new AlertDialog.Builder(this)
+                .setTitle("تأكيد حذف المحفظة / الاسم")
+                .setMessage("هل تريد حذف هذا التعريف؟\n\n" + name.trim() + "\n\nبعد الحذف لن يستخدمه التطبيق للتعرف على هذه المحفظة أو هذا الاسم.")
+                .setPositiveButton("موافق، حذف", (d,w) -> { AppStore.deleteTrustedContact(this, contact.id); showTrustedContacts(); })
+                .setNegativeButton("إلغاء", null)
+                .show();
     }
 
     private void showTrustedDialog() {
@@ -1236,6 +1301,65 @@ public class MainActivity extends Activity {
                 .show();
     }
 
+
+    private void openBackupSave() {
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, AppStore.buildBackupFileName(this));
+        startActivityForResult(intent, REQ_BACKUP_SAVE);
+    }
+
+    private void openBackupRestore() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("*/*");
+        startActivityForResult(intent, REQ_BACKUP_RESTORE);
+    }
+
+    private void writeBackupToUri(Uri uri) {
+        try {
+            OutputStream out = getContentResolver().openOutputStream(uri);
+            OutputStreamWriter writer = new OutputStreamWriter(out, "UTF-8");
+            writer.write(AppStore.exportBackupJson(this).toString(2));
+            writer.flush();
+            writer.close();
+            if (out != null) out.close();
+            toast("تم حفظ النسخة الاحتياطية بنجاح");
+        } catch (Exception e) {
+            toast("فشل حفظ النسخة الاحتياطية: " + e.getMessage());
+        }
+    }
+
+    private void restoreBackupFromUri(Uri uri) {
+        try {
+            InputStream in = getContentResolver().openInputStream(uri);
+            BufferedReader reader = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) sb.append(line).append('\n');
+            reader.close();
+            final String backupText = sb.toString();
+            new AlertDialog.Builder(this)
+                    .setTitle("استعادة نسخة احتياطية")
+                    .setMessage("هل تريد استعادة هذه النسخة الاحتياطية؟\n\nسيتم استبدال البيانات الحالية داخل التطبيق ببيانات ملف النسخة: الكروت، الفئات، السجلات، المحافظ، الرسائل، اسم الشبكة والإعدادات. يفضل حفظ نسخة من البيانات الحالية قبل المتابعة.")
+                    .setPositiveButton("موافق، استعادة", (d,w) -> {
+                        try {
+                            AppStore.restoreBackupJson(this, backupText);
+                            toast("تمت استعادة النسخة الاحتياطية بنجاح");
+                            buildLayout();
+                            showHome();
+                        } catch (Exception e) {
+                            toast("فشل الاستعادة: " + e.getMessage());
+                        }
+                    })
+                    .setNegativeButton("إلغاء", null)
+                    .show();
+        } catch (Exception e) {
+            toast("فشل قراءة ملف النسخة الاحتياطية: " + e.getMessage());
+        }
+    }
+
     private void openTxtFile() {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.setType("text/*");
@@ -1251,6 +1375,12 @@ public class MainActivity extends Activity {
         }
         if (requestCode == REQ_PDF && resultCode == RESULT_OK && data != null) {
             writePdfReport(data.getData(), pendingReportAmount, pendingReportSummaryOnly);
+        }
+        if (requestCode == REQ_BACKUP_SAVE && resultCode == RESULT_OK && data != null) {
+            writeBackupToUri(data.getData());
+        }
+        if (requestCode == REQ_BACKUP_RESTORE && resultCode == RESULT_OK && data != null) {
+            restoreBackupFromUri(data.getData());
         }
     }
 
