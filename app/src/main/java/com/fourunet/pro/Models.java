@@ -78,16 +78,20 @@ class ParsedPayment {
 
 class TrustedContact {
     String id;
+    String walletName;
+    String senderKeywords;
     String fullName;
     String tripleName;
     String phone;
     boolean active;
 
-    TrustedContact(String id, String fullName, String tripleName, String phone, boolean active) {
+    TrustedContact(String id, String walletName, String senderKeywords, String fullName, String tripleName, String phone, boolean active) {
         this.id = id;
-        this.fullName = fullName;
-        this.tripleName = tripleName;
-        this.phone = phone;
+        this.walletName = walletName == null || walletName.trim().isEmpty() ? "ONE Cash" : walletName.trim();
+        this.senderKeywords = senderKeywords == null ? "" : senderKeywords.trim();
+        this.fullName = fullName == null ? "" : fullName.trim();
+        this.tripleName = tripleName == null ? "" : tripleName.trim();
+        this.phone = phone == null ? "" : phone.trim();
         this.active = active;
     }
 }

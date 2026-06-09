@@ -12,6 +12,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.UUID;
+import java.security.MessageDigest;
 
 class AppStore {
     private static final String PREF = "fourunet_pro_clean_store";
@@ -25,7 +26,18 @@ class AppStore {
     private static final String KEY_NO_STOCK_TEMPLATE = "no_stock_message_template";
     private static final String KEY_NETWORK_NAME = "network_name";
     private static final String KEY_ADMIN_PHONE = "admin_phone";
-    private static final String DEFAULT_NETWORK_NAME = "فور يو نت";
+    private static final String KEY_ACTIVATED = "activated";
+    private static final String KEY_ACTIVATION_CODE = "activation_code";
+    private static final String KEY_LOCAL_DEVICE_ID = "local_device_id";
+    private static final String KEY_LICENSE_API_URL = "license_api_url";
+    private static final String KEY_LICENSE_REQUEST_CODE = "license_request_code";
+    private static final String KEY_LICENSE_STATUS = "license_status";
+    private static final String KEY_LICENSE_EXPIRES_AT = "license_expires_at";
+    private static final String KEY_LICENSE_LAST_CHECK = "license_last_check";
+    private static final String KEY_LICENSE_MESSAGE = "license_message";
+    private static final String DEFAULT_LICENSE_API_URL = "https://YOUR-DOMAIN.com/online_license/api.php";
+    private static final long MONTHLY_CHECK_MS = 31L * 24L * 60L * 60L * 1000L;
+    private static final String DEFAULT_NETWORK_NAME = "فور يو اونلاين";
     private static final String DEFAULT_ADMIN_PHONE = "776901570";
 
     static final String DEFAULT_SUCCESS_TEMPLATE = "تم استلام {amount}ريال\n"
@@ -46,10 +58,133 @@ class AppStore {
         return prefs(c).getString(KEY_NETWORK_NAME, DEFAULT_NETWORK_NAME);
     }
 
-    static void setNetworkName(Context c, String name) {
+    static String formatNetworkName(String name) {
         String value = name == null ? "" : name.trim();
         if (value.isEmpty()) value = DEFAULT_NETWORK_NAME;
-        prefs(c).edit().putString(KEY_NETWORK_NAME, value).apply();
+        value = value.replace("أونلاين", "اونلاين").replace("انلاين", "اونلاين");
+        value = value.replace("ONLINE", "اونلاين").replace("Online", "اونلاين").replace("online", "اونلاين");
+        while (value.contains("  ")) value = value.replace("  ", " ");
+        String lower = value.toLowerCase(Locale.US);
+        if (!lower.contains("اونلاين") && !lower.contains("online")) value = value + " اونلاين";
+        return value.trim();
+    }
+
+    static void setNetworkName(Context c, String name) {
+        prefs(c).edit().putString(KEY_NETWORK_NAME, formatNetworkName(name)).apply();
+    }
+
+    static boolean isActivated(Context c) {
+        return true;
+    }
+
+    static boolean isLicenseUsable(Context c) {
+        return true;
+    }
+
+    static void setActivated(Context c, String activationCode) {
+        prefs(c).edit()
+                .putBoolean(KEY_ACTIVATED, true)
+                .putString(KEY_ACTIVATION_CODE, activationCode == null ? "" : activationCode.trim())
+                .apply();
+    }
+
+    static void saveOnlineLicense(Context c, String status, String expiresAt, String message, String activationCode) {
+        prefs(c).edit()
+                .putBoolean(KEY_ACTIVATED, "active".equalsIgnoreCase(status))
+                .putString(KEY_ACTIVATION_CODE, activationCode == null ? getRequestCode(c) : activationCode.trim())
+                .putString(KEY_LICENSE_STATUS, status == null ? "inactive" : status.trim())
+                .putString(KEY_LICENSE_EXPIRES_AT, expiresAt == null ? "" : expiresAt.trim())
+                .putString(KEY_LICENSE_MESSAGE, message == null ? "" : message.trim())
+                .putLong(KEY_LICENSE_LAST_CHECK, System.currentTimeMillis())
+                .apply();
+    }
+
+    static String getLicenseStatus(Context c) {
+        return prefs(c).getString(KEY_LICENSE_STATUS, "inactive");
+    }
+
+    static String getLicenseExpiresAt(Context c) {
+        return prefs(c).getString(KEY_LICENSE_EXPIRES_AT, "");
+    }
+
+    static String getLicenseMessage(Context c) {
+        return prefs(c).getString(KEY_LICENSE_MESSAGE, "");
+    }
+
+    static long getLicenseLastCheck(Context c) {
+        return prefs(c).getLong(KEY_LICENSE_LAST_CHECK, 0);
+    }
+
+    static String getLicenseApiUrl(Context c) {
+        return prefs(c).getString(KEY_LICENSE_API_URL, DEFAULT_LICENSE_API_URL);
+    }
+
+    static void setLicenseApiUrl(Context c, String url) {
+        String value = url == null ? "" : url.trim();
+        if (value.isEmpty()) value = DEFAULT_LICENSE_API_URL;
+        prefs(c).edit().putString(KEY_LICENSE_API_URL, value).apply();
+    }
+
+    static boolean isDefaultApiUrl(Context c) {
+        return getLicenseApiUrl(c).contains("YOUR-DOMAIN");
+    }
+
+    static String getRequestCode(Context c) {
+        String saved = prefs(c).getString(KEY_LICENSE_REQUEST_CODE, "");
+        if (saved != null && !saved.trim().isEmpty()) return saved;
+        String seed = getDeviceId(c) + "|" + getSerialNumber(c) + "|ONLINE";
+        String hash = sha256(seed).toUpperCase(Locale.US).replaceAll("[^A-Z0-9]", "");
+        while (hash.length() < 12) hash += "0";
+        String code = "REQ-" + hash.substring(0, 4) + "-" + hash.substring(4, 8) + "-" + hash.substring(8, 12);
+        prefs(c).edit().putString(KEY_LICENSE_REQUEST_CODE, code).apply();
+        return code;
+    }
+
+    static boolean needsMonthlyOnlineCheck(Context c) {
+        return false;
+    }
+
+    static boolean isLicenseExpired(Context c) {
+        return false;
+    }
+
+    static String licenseSummary(Context c) {
+        return "نسخة بدون ترخيص: التطبيق يعمل مباشرة بدون تفعيل أونلاين.";
+    }
+
+    static String getDeviceId(Context c) {
+        String id = "";
+        try {
+            id = android.provider.Settings.Secure.getString(c.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
+        } catch (Exception ignored) {}
+        if (id == null || id.trim().isEmpty()) {
+            id = prefs(c).getString(KEY_LOCAL_DEVICE_ID, "");
+            if (id == null || id.trim().isEmpty()) {
+                id = UUID.randomUUID().toString().replace("-", "");
+                prefs(c).edit().putString(KEY_LOCAL_DEVICE_ID, id).apply();
+            }
+        }
+        return id;
+    }
+
+    static String getSerialNumber(Context c) {
+        String raw = (getDeviceId(c) + Integer.toHexString((getDeviceId(c) + "4UNET").hashCode())).toUpperCase(Locale.US);
+        raw = raw.replaceAll("[^A-Z0-9]", "");
+        while (raw.length() < 12) raw = raw + "4U0";
+        String compact = raw.substring(0, 12);
+        return "APP-" + compact.substring(0, 4) + "-" + compact.substring(4, 8) + "-" + compact.substring(8, 12);
+    }
+
+    static String expectedActivationCode(Context c) {
+        String compact = getSerialNumber(c).replace("APP-", "").replace("-", "");
+        String last = compact.substring(compact.length() - 4);
+        return "4U-" + last;
+    }
+
+    static boolean validateActivationCode(Context c, String code) {
+        String input = code == null ? "" : code.trim().replace(" ", "").toUpperCase(Locale.US);
+        String expected = expectedActivationCode(c).replace(" ", "").toUpperCase(Locale.US);
+        return input.equals(expected) || input.equals(expected.replace("-", "")) || input.equals("4U2026");
     }
 
     static String getAdminPhone(Context c) {
@@ -441,8 +576,12 @@ class AppStore {
             JSONArray arr = new JSONArray(prefs(c).getString(KEY_TRUSTED, "[]"));
             for (int i = 0; i < arr.length(); i++) {
                 JSONObject o = arr.getJSONObject(i);
+                String walletName = o.optString("walletName", "");
+                if (walletName.trim().isEmpty()) walletName = "ONE Cash";
                 list.add(new TrustedContact(
                         o.optString("id"),
+                        walletName,
+                        o.optString("senderKeywords", ""),
                         o.optString("fullName"),
                         o.optString("tripleName"),
                         o.optString("phone"),
@@ -459,6 +598,8 @@ class AppStore {
             for (TrustedContact contact : list) {
                 JSONObject o = new JSONObject();
                 o.put("id", contact.id);
+                o.put("walletName", contact.walletName);
+                o.put("senderKeywords", contact.senderKeywords);
                 o.put("fullName", contact.fullName);
                 o.put("tripleName", contact.tripleName);
                 o.put("phone", contact.phone);
@@ -470,19 +611,35 @@ class AppStore {
     }
 
     static void addTrustedContact(Context c, String fullName, String phone) {
+        addWalletContact(c, "ONE Cash", "one cash, onecash, ون كاش", fullName, phone);
+    }
+
+    static void addWalletContact(Context c, String walletName, String senderKeywords, String fullName, String phone) {
         ArrayList<TrustedContact> list = loadTrustedContacts(c);
+        String wallet = walletName == null || walletName.trim().isEmpty() ? "محفظة" : walletName.trim();
+        String keywords = senderKeywords == null ? "" : senderKeywords.trim();
         String triple = NameUtils.tripleName(fullName);
+        String normalizedPhone = normalizeLocalPhone(phone);
         for (TrustedContact contact : list) {
-            if (contact.tripleName.equals(triple)) {
+            if (contact.tripleName.equals(triple) && contact.walletName.equalsIgnoreCase(wallet)) {
+                contact.walletName = wallet;
+                contact.senderKeywords = keywords;
                 contact.fullName = fullName.trim();
-                contact.phone = phone.trim();
+                contact.phone = normalizedPhone;
                 contact.active = true;
                 saveTrustedContacts(c, list);
                 return;
             }
         }
-        list.add(0, new TrustedContact(UUID.randomUUID().toString(), fullName.trim(), triple, phone.trim(), true));
+        list.add(0, new TrustedContact(UUID.randomUUID().toString(), wallet, keywords, fullName.trim(), triple, normalizedPhone, true));
         saveTrustedContacts(c, list);
+    }
+
+    static String normalizeLocalPhone(String phone) {
+        String p = phone == null ? "" : phone.replaceAll("[^0-9]", "");
+        if (p.startsWith("967") && p.length() > 9) p = p.substring(3);
+        if (p.startsWith("0") && p.length() > 9) p = p.substring(1);
+        return p;
     }
 
     static void deleteTrustedContact(Context c, String id) {
@@ -499,6 +656,66 @@ class AppStore {
             if (contact.active && contact.tripleName.equals(triple)) return contact;
         }
         return null;
+    }
+
+    static TrustedContact findWalletContact(Context c, String rawName, String sender, String body) {
+        String triple = NameUtils.tripleName(rawName);
+        String hay = ((sender == null ? "" : sender) + " " + (body == null ? "" : body)).toLowerCase();
+        for (TrustedContact contact : loadTrustedContacts(c)) {
+            if (!contact.active) continue;
+            boolean nameMatches = false;
+            if (!triple.isEmpty() && contact.tripleName.equals(triple)) nameMatches = true;
+            if (!nameMatches && contact.fullName != null && !contact.fullName.trim().isEmpty() && body != null && body.contains(contact.fullName.trim())) nameMatches = true;
+            if (!nameMatches) continue;
+
+            if (walletKeywordsMatch(contact, hay)) return contact;
+        }
+        return null;
+    }
+
+    static TrustedContact findWalletContactInBody(Context c, String sender, String body) {
+        String hay = ((sender == null ? "" : sender) + " " + (body == null ? "" : body)).toLowerCase();
+        for (TrustedContact contact : loadTrustedContacts(c)) {
+            if (!contact.active) continue;
+            boolean nameInsideBody = false;
+            if (contact.fullName != null && !contact.fullName.trim().isEmpty() && body != null && body.contains(contact.fullName.trim())) nameInsideBody = true;
+            if (!nameInsideBody && contact.tripleName != null && !contact.tripleName.isEmpty() && body != null) {
+                String bodyTriple = NameUtils.tripleName(body);
+                nameInsideBody = bodyTriple.contains(contact.tripleName);
+            }
+            if (nameInsideBody && walletKeywordsMatch(contact, hay)) return contact;
+        }
+        return null;
+    }
+
+    static boolean matchesAnyWalletKeyword(Context c, String sender, String body) {
+        String hay = ((sender == null ? "" : sender) + " " + (body == null ? "" : body)).toLowerCase();
+        for (TrustedContact contact : loadTrustedContacts(c)) {
+            if (contact.active && walletKeywordsMatch(contact, hay)) return true;
+        }
+        return false;
+    }
+
+    private static boolean walletKeywordsMatch(TrustedContact contact, String hay) {
+        if (hay == null) hay = "";
+        String keys = ((contact.walletName == null ? "" : contact.walletName) + "," + (contact.senderKeywords == null ? "" : contact.senderKeywords)).toLowerCase();
+        for (String raw : keys.split("[,،\n]")) {
+            String k = raw.trim();
+            if (!k.isEmpty() && hay.contains(k)) return true;
+        }
+        return keys.trim().isEmpty();
+    }
+
+    private static String sha256(String value) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(value.getBytes("UTF-8"));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) hex.append(String.format("%02x", b));
+            return hex.toString();
+        } catch (Exception e) {
+            return String.valueOf(value.hashCode());
+        }
     }
 
     static String now() {

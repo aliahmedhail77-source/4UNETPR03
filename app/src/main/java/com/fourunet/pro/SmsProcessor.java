@@ -8,10 +8,11 @@ import java.util.UUID;
 
 class SmsProcessor {
     static void processIncomingSms(Context context, String sender, String body) {
+        if (!AppStore.isActivated(context)) return;
         if (!AppStore.isAutoSendEnabled(context)) return;
-        if (!PaymentParser.trustedSender(sender)) return;
+        if (!PaymentParser.trustedSender(context, sender, body)) return;
 
-        ParsedPayment payment = PaymentParser.parse(sender, body);
+        ParsedPayment payment = PaymentParser.parse(context, sender, body);
         if (payment == null) {
             addLog(context, "", sender, "", "", 0, "مرفوض", "تعذر فهم الرسالة", "");
             return;
@@ -24,27 +25,32 @@ class SmsProcessor {
         String receiver = payment.customerPhone;
         String messageNote = "تمت المعالجة تلقائيًا";
 
-        if ((receiver == null || receiver.trim().isEmpty()) && "ONE Cash".equals(payment.provider)) {
-            TrustedContact contact = AppStore.findTrustedByName(context, payment.customerName);
-            if (contact == null) {
-                addLog(context, payment.provider, sender, payment.customerName, "", payment.amount, "معلق",
-                        "ONE Cash: الاسم الثلاثي غير موجود في الأسماء الموثوقة: " + NameUtils.tripleName(payment.customerName), "");
-                return;
+        if (receiver == null || receiver.trim().isEmpty()) {
+            TrustedContact contact = AppStore.findWalletContact(context, payment.customerName, sender, body);
+            if (contact == null) contact = AppStore.findTrustedByName(context, payment.customerName);
+            if (contact != null) {
+                receiver = contact.phone;
+                messageNote = contact.walletName + ": تم اعتماد الاسم الثلاثي " + contact.tripleName;
             }
-            receiver = contact.phone;
-            messageNote = "ONE Cash: تم اعتماد الاسم الثلاثي " + contact.tripleName;
         }
 
         if (receiver == null || receiver.trim().isEmpty()) {
-            addLog(context, payment.provider, sender, payment.customerName, "", payment.amount, "معلق", "لا يوجد رقم إرسال معروف", "");
+            addLog(context, payment.provider, sender, payment.customerName, "", payment.amount, "معلق", "لا يوجد رقم إرسال معروف؛ أضف الاسم في إدارة المحافظ والأسماء الموثوقة", "");
             return;
         }
 
         CardItem card = AppStore.takeAvailableCard(context, payment.amount, receiver);
         if (card == null) {
             String noStock = AppStore.buildNoStockMessage(context, payment.amount);
-            trySendSms(receiver, noStock);
-            addLog(context, payment.provider, sender, payment.customerName, receiver, payment.amount, "معلق", "لا توجد كروت متاحة من نفس الفئة", "");
+            boolean noStockSent = trySendSms(receiver, noStock);
+            if (noStockSent) {
+                NotifyHelper.notifyNoStockSent(context, payment.amount, receiver);
+            } else {
+                NotifyHelper.notifyNoStockFailed(context, payment.amount, receiver);
+            }
+            addLog(context, payment.provider, sender, payment.customerName, receiver, payment.amount,
+                    noStockSent ? "تم إرسال تنبيه النفاد" : "فشل تنبيه النفاد",
+                    noStockSent ? "لا توجد كروت متاحة من نفس الفئة وتم إرسال تنبيه للزبون" : "لا توجد كروت متاحة وفشل إرسال تنبيه النفاد", "");
             return;
         }
 

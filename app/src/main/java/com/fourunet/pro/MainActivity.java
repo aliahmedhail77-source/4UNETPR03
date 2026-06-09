@@ -16,6 +16,8 @@ import android.graphics.pdf.PdfDocument;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.OpenableColumns;
 import android.text.InputType;
 import android.view.Gravity;
@@ -26,10 +28,16 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Locale;
+
+import org.json.JSONObject;
 
 public class MainActivity extends Activity {
     private static final int REQ_FILE = 20;
@@ -57,10 +65,224 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if (Build.VERSION.SDK_INT >= 21) getWindow().setStatusBarColor(purpleLight);
         AppStore.ensureDefaultCategories(this);
         requestPermissionsIfNeeded();
         buildLayout();
         showHome();
+    }
+
+    private void showActivationScreen() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setBackgroundColor(bg);
+        setContentView(page);
+
+        TextView top = new TextView(this);
+        top.setText("ONLINE");
+        top.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        top.setPadding(0, 0, dp(24), 0);
+        top.setTextSize(22);
+        top.setTypeface(appTypeface(true));
+        top.setTextColor(Color.WHITE);
+        top.setBackgroundColor(purpleLight);
+        page.addView(top, new LinearLayout.LayoutParams(-1, dp(56)));
+
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setGravity(Gravity.CENTER_HORIZONTAL);
+        body.setPadding(dp(24), dp(30), dp(24), dp(28));
+        scroll.addView(body);
+        page.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+
+        TextView lock = tv("🔐", 76, purpleLight, false);
+        lock.setGravity(Gravity.CENTER);
+        body.addView(lock, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView title = tv("تفعيل ONLINE", 30, text, true);
+        title.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
+        titleLp.setMargins(0, dp(18), 0, dp(8));
+        body.addView(title, titleLp);
+
+        TextView note = tv("أرسل كود الطلب للإدارة، وبعد تفعيله من الموقع اضغط تفعيل / تحديث من الإنترنت.", 15, muted, false);
+        note.setGravity(Gravity.CENTER);
+        body.addView(note);
+
+        LinearLayout info = cardBox();
+        LinearLayout.LayoutParams infoLp = new LinearLayout.LayoutParams(-1, -2);
+        infoLp.setMargins(0, dp(24), 0, dp(16));
+        info.setLayoutParams(infoLp);
+        info.addView(tv("كود طلب التفعيل", 16, text, true));
+        TextView req = tv(AppStore.getRequestCode(this), 20, purpleLight, true);
+        req.setGravity(Gravity.LEFT);
+        req.setPadding(0, dp(8), 0, dp(10));
+        info.addView(req);
+        info.addView(separator());
+        info.addView(tv("الرقم التسلسلي (Serial Number)", 16, text, true));
+        TextView serial = tv(AppStore.getSerialNumber(this), 17, text, false);
+        serial.setGravity(Gravity.LEFT);
+        serial.setPadding(0, dp(8), 0, dp(10));
+        info.addView(serial);
+        info.addView(separator());
+        info.addView(tv("معرف الجهاز (Device ID)", 16, text, true));
+        TextView device = tv(AppStore.getDeviceId(this), 13, text, false);
+        device.setGravity(Gravity.LEFT);
+        device.setPadding(0, dp(8), 0, 0);
+        info.addView(device);
+        body.addView(info);
+
+        TextView license = small(AppStore.licenseSummary(this));
+        license.setGravity(Gravity.CENTER);
+        LinearLayout licenseBox = cardBox();
+        licenseBox.addView(tv("حالة الاشتراك", 17, text, true));
+        licenseBox.addView(license);
+        body.addView(licenseBox);
+
+        EditText networkName = activationInput("اسم الشبكة مثل: فور يو");
+        networkName.setText(AppStore.getNetworkName(this));
+        body.addView(networkName, new LinearLayout.LayoutParams(-1, dp(58)));
+
+        Space sp1 = new Space(this);
+        body.addView(sp1, new LinearLayout.LayoutParams(-1, dp(12)));
+
+        EditText apiUrl = activationInput("رابط سيرفر التفعيل API");
+        apiUrl.setText(AppStore.getLicenseApiUrl(this));
+        apiUrl.setSingleLine(false);
+        apiUrl.setMinLines(1);
+        apiUrl.setMaxLines(2);
+        body.addView(apiUrl, new LinearLayout.LayoutParams(-1, dp(70)));
+
+        TextView apiHint = small("بعد تجهيز موقع الإدارة نضع هنا رابط api.php. إذا كان الرابط YOUR-DOMAIN فالتفعيل لن يعمل حتى يتم رفع الموقع وتعديل الرابط.");
+        apiHint.setGravity(Gravity.RIGHT);
+        apiHint.setPadding(0, dp(8), 0, dp(12));
+        body.addView(apiHint);
+
+        Button activate = action("تفعيل / تحديث من الإنترنت", purpleLight, Color.rgb(56, 48, 78), v -> {
+            String name = networkName.getText().toString().trim();
+            String url = apiUrl.getText().toString().trim();
+            if (name.isEmpty()) {
+                toast("اكتب اسم الشبكة أولًا");
+                return;
+            }
+            if (url.isEmpty() || url.contains("YOUR-DOMAIN")) {
+                toast("أدخل رابط سيرفر التفعيل الصحيح أولًا");
+                return;
+            }
+            AppStore.setNetworkName(this, name);
+            AppStore.setLicenseApiUrl(this, url);
+            performOnlineLicenseCheck(true);
+        });
+        body.addView(activate, new LinearLayout.LayoutParams(-1, dp(58)));
+
+        Button copyText = action("عرض النص الذي ترسله للإدارة", card2, text, v -> showActivationRequestText());
+        LinearLayout.LayoutParams copyLp = new LinearLayout.LayoutParams(-1, dp(54));
+        copyLp.setMargins(0, dp(12), 0, 0);
+        body.addView(copyText, copyLp);
+
+        TextView hint = tv("التطبيق سيحتاج اتصالًا بالإنترنت مرة كل شهر لتجديد التحقق. إذا لم يتصل خلال شهر، يتوقف الإرسال التلقائي حتى يتم تحديث الترخيص.", 12, muted, false);
+        hint.setGravity(Gravity.CENTER);
+        hint.setPadding(0, dp(14), 0, 0);
+        body.addView(hint);
+    }
+
+    private void showActivationRequestText() {
+        String textToSend = "طلب تفعيل تطبيق ONLINE\n"
+                + "اسم الشبكة: " + AppStore.getNetworkName(this) + "\n"
+                + "كود الطلب: " + AppStore.getRequestCode(this) + "\n"
+                + "Serial: " + AppStore.getSerialNumber(this) + "\n"
+                + "Device ID: " + AppStore.getDeviceId(this);
+        new AlertDialog.Builder(this)
+                .setTitle("أرسل هذا النص للإدارة")
+                .setMessage(textToSend)
+                .setPositiveButton("تم", null)
+                .show();
+    }
+
+    private void performOnlineLicenseCheck(boolean fromActivationScreen) {
+        toast("جاري الاتصال بسيرفر التفعيل...");
+        new Thread(() -> {
+            boolean ok = false;
+            String msg = "";
+            String status = "inactive";
+            String expires = "";
+            String network = AppStore.getNetworkName(this);
+            try {
+                String api = AppStore.getLicenseApiUrl(this);
+                URL url = new URL(api);
+                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(15000);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+                String data = "action=" + enc("verify")
+                        + "&app=" + enc("ONLINE")
+                        + "&request_code=" + enc(AppStore.getRequestCode(this))
+                        + "&device_id=" + enc(AppStore.getDeviceId(this))
+                        + "&serial=" + enc(AppStore.getSerialNumber(this))
+                        + "&network_name=" + enc(network);
+                OutputStreamWriter writer = new OutputStreamWriter(conn.getOutputStream(), "UTF-8");
+                writer.write(data);
+                writer.flush();
+                writer.close();
+
+                InputStream in = conn.getResponseCode() >= 400 ? conn.getErrorStream() : conn.getInputStream();
+                BufferedReader br = new BufferedReader(new InputStreamReader(in, "UTF-8"));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = br.readLine()) != null) sb.append(line);
+                br.close();
+                JSONObject json = new JSONObject(sb.toString());
+                ok = json.optBoolean("ok", false);
+                status = json.optString("status", ok ? "active" : "inactive");
+                expires = json.optString("expires_at", "");
+                msg = json.optString("message", ok ? "تم التحقق من الترخيص" : "لم يتم قبول الترخيص");
+                String serverNetwork = json.optString("network_name", "");
+                if (!serverNetwork.trim().isEmpty()) network = serverNetwork.trim();
+            } catch (Exception e) {
+                msg = "تعذر الاتصال بسيرفر التفعيل: " + e.getMessage();
+            }
+
+            final boolean finalOk = ok;
+            final String finalMsg = msg;
+            final String finalStatus = status;
+            final String finalExpires = expires;
+            final String finalNetwork = network;
+            new Handler(Looper.getMainLooper()).post(() -> {
+                if (finalOk && "active".equalsIgnoreCase(finalStatus)) {
+                    AppStore.setNetworkName(this, finalNetwork);
+                    AppStore.saveOnlineLicense(this, finalStatus, finalExpires, finalMsg, AppStore.getRequestCode(this));
+                    toast("تم تفعيل / تحديث الاشتراك بنجاح");
+                    requestPermissionsIfNeeded();
+                    buildLayout();
+                    showHome();
+                } else {
+                    toast(finalMsg);
+                    if (fromActivationScreen) showActivationScreen();
+                }
+            });
+        }).start();
+    }
+
+    private String enc(String value) throws Exception {
+        return URLEncoder.encode(value == null ? "" : value, "UTF-8");
+    }
+
+
+    private EditText activationInput(String hint) {
+        EditText input = new EditText(this);
+        input.setHint(hint);
+        input.setSingleLine(true);
+        input.setGravity(Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        input.setTextColor(text);
+        input.setHintTextColor(muted);
+        input.setTextSize(16);
+        input.setTypeface(appTypeface(false));
+        input.setPadding(dp(14), 0, dp(14), 0);
+        input.setBackground(round(bg, dp(8), Color.argb(150, 255,255,255), dp(1)));
+        return input;
     }
 
     private void requestPermissionsIfNeeded() {
@@ -101,11 +323,11 @@ public class MainActivity extends Activity {
         h.setPadding(dp(16), dp(24), dp(16), dp(14));
         h.setBackgroundColor(purpleLight);
 
-        TextView title = tv("حاسب اونلاين", 24, Color.WHITE, true);
+        TextView title = tv(AppStore.getNetworkName(this), 24, Color.WHITE, true);
         title.setGravity(Gravity.RIGHT);
         h.addView(title);
 
-        TextView sub = tv("بيع كروت فور يو نت تلقائيًا", 12, Color.argb(230, 255,255,255), false);
+        TextView sub = tv("إدارة وبيع كروت الإنترنت تلقائيًا", 12, Color.argb(230, 255,255,255), false);
         sub.setGravity(Gravity.RIGHT);
         h.addView(sub);
         return h;
@@ -124,6 +346,7 @@ public class MainActivity extends Activity {
         Button b = new Button(this);
         b.setText(icon + "\n" + label);
         b.setTextSize(11);
+        b.setTypeface(appTypeface(false));
         b.setAllCaps(false);
         b.setGravity(Gravity.CENTER);
         b.setTextColor(key.equals(activeTab) ? purpleLight : muted);
@@ -145,13 +368,17 @@ public class MainActivity extends Activity {
         return gd;
     }
 
+    private Typeface appTypeface(boolean bold) {
+        return Typeface.create(bold ? "sans-serif-medium" : "sans-serif", bold ? Typeface.BOLD : Typeface.NORMAL);
+    }
+
     private TextView tv(String value, int size, int color, boolean bold) {
         TextView t = new TextView(this);
         t.setText(value);
         t.setTextSize(size);
         t.setTextColor(color);
         t.setGravity(Gravity.RIGHT);
-        if (bold) t.setTypeface(null, Typeface.BOLD);
+        t.setTypeface(appTypeface(bold));
         return t;
     }
 
@@ -199,7 +426,7 @@ public class MainActivity extends Activity {
         Button b = new Button(this);
         b.setText(label);
         b.setTextColor(fgColor);
-        b.setTypeface(null, Typeface.BOLD);
+        b.setTypeface(appTypeface(true));
         b.setAllCaps(false);
         b.setBackground(round(bgColor, dp(16), Color.TRANSPARENT, 0));
         b.setOnClickListener(listener);
@@ -552,7 +779,7 @@ public class MainActivity extends Activity {
         p.setTextAlign(Paint.Align.RIGHT);
         p.setColor(Color.BLACK);
         p.setTextSize(20); p.setTypeface(Typeface.DEFAULT_BOLD);
-        c.drawText("تقرير مبيعات كروت فور يو نت", w - margin, y, p); y += 28;
+        c.drawText("تقرير مبيعات كروت " + AppStore.getNetworkName(this), w - margin, y, p); y += 28;
         p.setTextSize(12); p.setTypeface(Typeface.DEFAULT);
         String range = amountFilter < 0 ? "إجمالي كل الفئات" : "فئة " + amountFilter + " ريال";
         c.drawText("النطاق: " + range, w - margin, y, p); y += 20;
@@ -686,16 +913,23 @@ public class MainActivity extends Activity {
         clear();
         content.addView(title("الإعدادات"));
 
+
+        LinearLayout appName = cardBox();
+        appName.addView(tv("اسم الشبكة داخل التطبيق", 17, text, true));
+        appName.addView(small("الاسم الحالي: " + AppStore.getNetworkName(this) + "\nإذا كتبت: فور يو، سيحفظه التطبيق تلقائيًا: فور يو اونلاين. اسم التطبيق تحت الأيقونة أصبح: ONLINE."));
+        appName.addView(action("تعديل اسم الشبكة", purple, Color.WHITE, v -> showNetworkNameDialog()));
+        content.addView(appName);
+
         LinearLayout auto = cardBox();
         Switch sw = new Switch(this);
         sw.setText("تشغيل الإرسال التلقائي");
         sw.setTextColor(text);
         sw.setTextSize(17);
-        sw.setTypeface(null, Typeface.BOLD);
+        sw.setTypeface(appTypeface(true));
         sw.setChecked(AppStore.isAutoSendEnabled(this));
         sw.setOnCheckedChangeListener((b, enabled) -> AppStore.setAutoSendEnabled(this, enabled));
         auto.addView(sw);
-        auto.addView(small("الرسائل الموثوقة: Jawali / Jaib / ONE Cash."));
+        auto.addView(small("الرسائل الموثوقة: Jawali / Jaib / ONE Cash + أي محفظة تضيفها من إدارة المحافظ والأسماء الموثوقة."));
         content.addView(auto);
 
         LinearLayout messages = cardBox();
@@ -708,9 +942,9 @@ public class MainActivity extends Activity {
         content.addView(messages);
 
         LinearLayout trusted = cardBox();
-        trusted.addView(tv("الأسماء الموثوقة لوَن كاش", 17, text, true));
-        trusted.addView(small("أضف الاسم كما يظهر في ONE Cash مع رقم الإرسال. المطابقة تكون على الاسم الثلاثي."));
-        trusted.addView(action("إدارة الأسماء الموثوقة", purple, Color.WHITE, v -> showTrustedContacts()));
+        trusted.addView(tv("إدارة المحافظ والأسماء الموثوقة", 17, text, true));
+        trusted.addView(small("أضف أي محفظة بنفس نظام ون كاش مثل floosk أو كاش: اسم المحفظة + كلمات التعرف + الاسم الظاهر في رسالة المحفظة + رقم إرسال الكرت."));
+        trusted.addView(action("فتح إدارة المحافظ", purple, Color.WHITE, v -> showTrustedContacts()));
         content.addView(trusted);
 
         LinearLayout danger = cardBox();
@@ -718,7 +952,7 @@ public class MainActivity extends Activity {
         danger.addView(action("حذف كل البيانات", Color.rgb(82,30,42), Color.WHITE, v -> new AlertDialog.Builder(this)
                 .setTitle("تأكيد")
                 .setMessage("هل تريد حذف كل البيانات؟")
-                .setPositiveButton("نعم", (d,w) -> { AppStore.clearAll(this); showHome(); })
+                .setPositiveButton("نعم", (d,w) -> { AppStore.clearAll(this); AppStore.ensureDefaultCategories(this); buildLayout(); showHome(); })
                 .setNegativeButton("إلغاء", null)
                 .show()));
         content.addView(danger);
@@ -811,12 +1045,32 @@ public class MainActivity extends Activity {
         input.setGravity(Gravity.RIGHT);
         input.setText(AppStore.getNetworkName(this));
         new AlertDialog.Builder(this)
-                .setTitle("تعديل اسم الشبكة")
+                .setTitle("تعديل اسم التطبيق والشبكة")
                 .setView(input)
                 .setPositiveButton("حفظ", (d,w) -> {
                     AppStore.setNetworkName(this, input.getText().toString());
-                    toast("تم حفظ اسم الشبكة");
-                    showMessageTemplates();
+                    toast("تم حفظ الاسم: " + AppStore.getNetworkName(this));
+                    buildLayout();
+                    showSettings();
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
+
+    private void showApiUrlDialog() {
+        EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        input.setGravity(Gravity.LEFT);
+        input.setText(AppStore.getLicenseApiUrl(this));
+        new AlertDialog.Builder(this)
+                .setTitle("رابط سيرفر التفعيل")
+                .setMessage("ضع رابط ملف api.php بعد رفع موقع الإدارة. مثال: https://domain.com/online_license/api.php")
+                .setView(input)
+                .setPositiveButton("حفظ", (d,w) -> {
+                    AppStore.setLicenseApiUrl(this, input.getText().toString());
+                    toast("تم حفظ رابط السيرفر");
+                    showSettings();
                 })
                 .setNegativeButton("إلغاء", null)
                 .show();
@@ -899,35 +1153,63 @@ public class MainActivity extends Activity {
     private void showTrustedContacts() {
         setTab("settings");
         clear();
-        content.addView(title("الأسماء الموثوقة"));
+        content.addView(title("المحافظ والأسماء الموثوقة"));
 
         LinearLayout add = cardBox();
-        add.addView(action("إضافة اسم موثوق", purple, Color.WHITE, v -> showTrustedDialog()));
-        add.addView(small("بعد اعتماد الاسم مرة واحدة، أي تحويل لاحق بنفس الاسم الثلاثي سيتم اعتماده تلقائيًا."));
+        add.addView(tv("إضافة محفظة أو اسم موثوق", 17, text, true));
+        add.addView(small("هذه الصفحة تعرّف التطبيق على المحافظ التي لا تعطي رقم العميل داخل الرسالة. اكتب اسم المحفظة، وكلمات تظهر في المرسل أو نص الرسالة، والاسم كما يظهر في المحفظة، ورقم الزبون الذي سيستلم الكرت."));
+        add.addView(action("إضافة محفظة / اسم", purple, Color.WHITE, v -> showTrustedDialog()));
         content.addView(add);
 
         ArrayList<TrustedContact> list = AppStore.loadTrustedContacts(this);
+        if (list.isEmpty()) {
+            LinearLayout empty = cardBox();
+            empty.addView(small("لا توجد أسماء موثوقة بعد. أضف اسمًا لمحافظ مثل ONE Cash أو floosk أو كاش."));
+            content.addView(empty);
+        }
         for (TrustedContact contact : list) {
             LinearLayout box = cardBox();
-            box.addView(tv(contact.fullName, 18, text, true));
-            box.addView(small("الاسم الثلاثي: " + contact.tripleName + "\nرقم الإرسال: " + contact.phone));
+            box.addView(tv(contact.walletName + " - " + contact.fullName, 18, text, true));
+            box.addView(small("كلمات التعرف: " + (contact.senderKeywords == null || contact.senderKeywords.trim().isEmpty() ? contact.walletName : contact.senderKeywords)
+                    + "\nالاسم الثلاثي: " + contact.tripleName
+                    + "\nرقم استلام الكرت: " + contact.phone));
             box.addView(action("حذف", Color.rgb(82,30,42), Color.WHITE, v -> { AppStore.deleteTrustedContact(this, contact.id); showTrustedContacts(); }));
             content.addView(box);
         }
+
+        LinearLayout back = cardBox();
+        back.addView(action("رجوع للإعدادات", card2, text, v -> showSettings()));
+        content.addView(back);
     }
 
     private void showTrustedDialog() {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
-        EditText name = new EditText(this); name.setHint("الاسم كما يظهر في ONE Cash");
-        EditText phone = new EditText(this); phone.setHint("رقم الإرسال"); phone.setInputType(InputType.TYPE_CLASS_PHONE);
-        layout.addView(name); layout.addView(phone);
+        layout.setPadding(dp(8), dp(8), dp(8), dp(8));
+
+        TextView help = small("مثال: اسم المحفظة floosk، كلمات التعرف: floosk, فلوسك، الاسم الظاهر: محمد أحمد علي، رقم استلام الكرت: 77xxxxxxx. يمكن إضافة أكثر من عميل لنفس المحفظة.");
+        EditText wallet = new EditText(this); wallet.setHint("اسم المحفظة مثل floosk أو ONE Cash أو كاش"); wallet.setGravity(Gravity.RIGHT); wallet.setInputType(InputType.TYPE_CLASS_TEXT);
+        EditText keywords = new EditText(this); keywords.setHint("كلمات التعرف بالرسالة مفصولة بفاصلة مثل floosk, فلوسك, cash"); keywords.setGravity(Gravity.RIGHT); keywords.setInputType(InputType.TYPE_CLASS_TEXT);
+        EditText name = new EditText(this); name.setHint("الاسم كما يظهر في رسالة المحفظة"); name.setGravity(Gravity.RIGHT); name.setInputType(InputType.TYPE_CLASS_TEXT);
+        EditText phone = new EditText(this); phone.setHint("رقم استلام الكرت"); phone.setGravity(Gravity.RIGHT); phone.setInputType(InputType.TYPE_CLASS_PHONE);
+
+        wallet.setText("ONE Cash");
+        keywords.setText("one cash, onecash, ون كاش");
+
+        layout.addView(help);
+        layout.addView(wallet);
+        layout.addView(keywords);
+        layout.addView(name);
+        layout.addView(phone);
         new AlertDialog.Builder(this)
-                .setTitle("إضافة اسم موثوق")
+                .setTitle("إضافة محفظة / اسم موثوق")
                 .setView(layout)
                 .setPositiveButton("حفظ", (d,w) -> {
-                    if (name.getText().toString().trim().isEmpty() || phone.getText().toString().trim().isEmpty()) { toast("الاسم والرقم مطلوبان"); return; }
-                    AppStore.addTrustedContact(this, name.getText().toString().trim(), phone.getText().toString().trim());
+                    if (wallet.getText().toString().trim().isEmpty() || name.getText().toString().trim().isEmpty() || phone.getText().toString().trim().isEmpty()) {
+                        toast("اسم المحفظة والاسم الظاهر ورقم الاستلام مطلوبة");
+                        return;
+                    }
+                    AppStore.addWalletContact(this, wallet.getText().toString().trim(), keywords.getText().toString().trim(), name.getText().toString().trim(), phone.getText().toString().trim());
                     showTrustedContacts();
                 })
                 .setNegativeButton("إلغاء", null)

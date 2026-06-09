@@ -24,6 +24,19 @@ class NotifyHelper {
         show(context, title, body);
     }
 
+
+    static void notifyNoStockSent(Context context, int amount, String phone) {
+        String title = "نفدت كروت فئة " + amount + " ريال";
+        String body = "تم استلام السداد، ولا توجد كروت متاحة. تم إرسال تنبيه نفاد الفئة إلى العميل: " + (phone == null || phone.isEmpty() ? "-" : phone);
+        show(context, title, body);
+    }
+
+    static void notifyNoStockFailed(Context context, int amount, String phone) {
+        String title = "فشل تنبيه نفاد فئة " + amount + " ريال";
+        String body = "لا توجد كروت متاحة، ولم يتم إرسال رسالة التنبيه إلى العميل: " + (phone == null || phone.isEmpty() ? "-" : phone) + "\nراجع صلاحية إرسال الرسائل ورصيد الشريحة.";
+        show(context, title, body);
+    }
+
     private static void show(Context context, String title, String body) {
         try {
             NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
