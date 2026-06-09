@@ -42,16 +42,13 @@ class SmsProcessor {
 
         CardItem card = AppStore.takeAvailableCard(context, payment.amount, receiver);
         if (card == null) {
-            String noStock = "تم استلام مبلغ " + payment.amount + " ريال، لكن كروت فئة " + payment.amount + " غير متوفرة حاليًا.";
+            String noStock = AppStore.buildNoStockMessage(context, payment.amount);
             trySendSms(receiver, noStock);
             addLog(context, payment.provider, sender, payment.customerName, receiver, payment.amount, "معلق", "لا توجد كروت متاحة من نفس الفئة", "");
             return;
         }
 
-        String reply = "تم استلام " + payment.amount + "ريال\n"
-                + "رقم الكرت: " + card.code + "\n"
-                + "لشبكة: فور يو نت\n"
-                + "فئة " + payment.amount + "ريال";
+        String reply = AppStore.buildSuccessMessage(context, payment.amount, card.code);
 
         boolean sent = trySendSms(receiver, reply);
 

@@ -21,11 +21,101 @@ class AppStore {
     private static final String KEY_PROCESSED = "processed";
     private static final String KEY_TRUSTED = "trusted_contacts";
     private static final String KEY_AUTO_SEND = "auto_send_enabled";
+    private static final String KEY_SUCCESS_TEMPLATE = "success_message_template";
+    private static final String KEY_NO_STOCK_TEMPLATE = "no_stock_message_template";
+    private static final String KEY_NETWORK_NAME = "network_name";
+    private static final String KEY_ADMIN_PHONE = "admin_phone";
+    private static final String DEFAULT_NETWORK_NAME = "فور يو نت";
+    private static final String DEFAULT_ADMIN_PHONE = "776901570";
+
+    static final String DEFAULT_SUCCESS_TEMPLATE = "تم استلام {amount}ريال\n"
+            + "رقم الكرت: {card}\n"
+            + "لشبكة: {network}\n"
+            + "فئة {amount}ريال";
+
+    static final String DEFAULT_NO_STOCK_TEMPLATE = "تنبيه: تم استلام {amount}ريال لكن لا توجد كروت متاحة لفئة {amount}ريال.\n"
+            + "رقم إدارة الشبكة: {adminPhone}";
 
     static final int[] DEFAULT_AMOUNTS = new int[]{50, 100, 150, 200, 250, 300, 500};
 
     static SharedPreferences prefs(Context c) {
         return c.getSharedPreferences(PREF, Context.MODE_PRIVATE);
+    }
+
+    static String getNetworkName(Context c) {
+        return prefs(c).getString(KEY_NETWORK_NAME, DEFAULT_NETWORK_NAME);
+    }
+
+    static void setNetworkName(Context c, String name) {
+        String value = name == null ? "" : name.trim();
+        if (value.isEmpty()) value = DEFAULT_NETWORK_NAME;
+        prefs(c).edit().putString(KEY_NETWORK_NAME, value).apply();
+    }
+
+    static String getAdminPhone(Context c) {
+        return prefs(c).getString(KEY_ADMIN_PHONE, DEFAULT_ADMIN_PHONE);
+    }
+
+    static void setAdminPhone(Context c, String phone) {
+        String value = phone == null ? "" : phone.trim();
+        if (value.isEmpty()) value = DEFAULT_ADMIN_PHONE;
+        prefs(c).edit().putString(KEY_ADMIN_PHONE, value).apply();
+    }
+
+
+
+    static String getSuccessTemplate(Context c) {
+        return prefs(c).getString(KEY_SUCCESS_TEMPLATE, DEFAULT_SUCCESS_TEMPLATE);
+    }
+
+    static void setSuccessTemplate(Context c, String template) {
+        String value = template == null ? "" : template.trim();
+        if (value.isEmpty()) value = DEFAULT_SUCCESS_TEMPLATE;
+        prefs(c).edit().putString(KEY_SUCCESS_TEMPLATE, value).apply();
+    }
+
+    static String getNoStockTemplate(Context c) {
+        return prefs(c).getString(KEY_NO_STOCK_TEMPLATE, DEFAULT_NO_STOCK_TEMPLATE);
+    }
+
+    static void setNoStockTemplate(Context c, String template) {
+        String value = template == null ? "" : template.trim();
+        if (value.isEmpty()) value = DEFAULT_NO_STOCK_TEMPLATE;
+        prefs(c).edit().putString(KEY_NO_STOCK_TEMPLATE, value).apply();
+    }
+
+    static String buildSuccessMessage(Context c, int amount, String cardCode) {
+        return applyTemplate(c, getSuccessTemplate(c), amount, cardCode);
+    }
+
+    static String buildNoStockMessage(Context c, int amount) {
+        return applyTemplate(c, getNoStockTemplate(c), amount, "");
+    }
+
+    static String applyTemplate(String template, int amount, String cardCode) {
+        String out = template == null ? "" : template;
+        out = out.replace("{amount}", String.valueOf(amount));
+        out = out.replace("{card}", cardCode == null ? "" : cardCode);
+        out = out.replace("{network}", getNetworkNameForTemplateFallback());
+        out = out.replace("{adminPhone}", getAdminPhoneForTemplateFallback());
+        return out;
+    }
+
+    static String applyTemplate(Context c, String template, int amount, String cardCode) {
+        String out = template == null ? "" : template;
+        out = out.replace("{amount}", String.valueOf(amount));
+        out = out.replace("{card}", cardCode == null ? "" : cardCode);
+        out = out.replace("{network}", getNetworkName(c));
+        out = out.replace("{adminPhone}", getAdminPhone(c));
+        return out;
+    }
+
+    private static String getNetworkNameForTemplateFallback() {
+        return DEFAULT_NETWORK_NAME;
+    }
+
+    private static String getAdminPhoneForTemplateFallback() {
+        return DEFAULT_ADMIN_PHONE;
     }
 
     static boolean isAutoSendEnabled(Context c) {

@@ -9,6 +9,7 @@ import android.database.Cursor;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.pdf.PdfDocument;
@@ -40,6 +41,7 @@ public class MainActivity extends Activity {
     String activeTab = "home";
     int selectedAmount = 50;
     int pendingReportAmount = -1;
+    boolean pendingReportSummaryOnly = false;
 
     final int purple = Color.rgb(109, 75, 179);
     final int purpleLight = Color.rgb(200, 179, 255);
@@ -439,9 +441,10 @@ public class MainActivity extends Activity {
 
         LinearLayout report = cardBox();
         report.addView(tv("تقرير PDF", 17, text, true));
-        report.addView(small("يمكن تنزيل تقرير إجمالي أو تقرير لفئة محددة. التقرير يشمل عدد العمليات، الكروت المباعة، المتبقية، وتفاصيل كل عملية."));
-        report.addView(action("تحميل تقرير PDF إجمالي", purple, Color.WHITE, v -> startPdfDownload(-1)));
-        report.addView(action("تحميل تقرير PDF لفئة محددة", card2, text, v -> showPdfCategoryDialog()));
+        report.addView(small("يمكن تنزيل تقرير إجمالي مفصل مقسم إلى مربعات لكل فئة، أو تقرير مختصر، أو تقرير لفئة واحدة فقط."));
+        report.addView(action("تقرير إجمالي مفصل حسب الفئات", purple, Color.WHITE, v -> startPdfDownload(-1, false)));
+        report.addView(action("تقرير إجمالي مختصر", card2, text, v -> startPdfDownload(-1, true)));
+        report.addView(action("تقرير PDF لفئة محددة", card2, text, v -> showPdfCategoryDialog()));
         report.addView(action("حذف كل إشعارات السداد", Color.rgb(82,30,42), Color.WHITE, v -> confirmClearLogs()));
         content.addView(report);
 
@@ -472,15 +475,26 @@ public class MainActivity extends Activity {
         for (int i = 0; i < cats.size(); i++) labels[i] = cats.get(i).amount + " ريال";
         new AlertDialog.Builder(this)
                 .setTitle("اختر الفئة للتقرير")
-                .setItems(labels, (d, which) -> startPdfDownload(cats.get(which).amount))
+                .setItems(labels, (d, which) -> showPdfTypeDialog(cats.get(which).amount))
                 .setNegativeButton("إلغاء", null)
                 .show();
     }
 
-    private void startPdfDownload(int amount) {
+    private void showPdfTypeDialog(int amount) {
+        String[] items = new String[]{"تقرير مفصل لهذه الفئة", "تقرير مختصر لهذه الفئة"};
+        new AlertDialog.Builder(this)
+                .setTitle("نوع التقرير")
+                .setItems(items, (d, which) -> startPdfDownload(amount, which == 1))
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
+    private void startPdfDownload(int amount, boolean summaryOnly) {
         pendingReportAmount = amount;
+        pendingReportSummaryOnly = summaryOnly;
         String stamp = new SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(new Date());
-        String name = amount < 0 ? "4U_NET_report_all_" + stamp + ".pdf" : "4U_NET_report_" + amount + "_" + stamp + ".pdf";
+        String mode = summaryOnly ? "summary" : "details";
+        String name = amount < 0 ? "4U_NET_report_all_" + mode + "_" + stamp + ".pdf" : "4U_NET_report_" + amount + "_" + mode + "_" + stamp + ".pdf";
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("application/pdf");
@@ -507,6 +521,10 @@ public class MainActivity extends Activity {
     }
 
     private void writePdfReport(Uri uri, int amountFilter) {
+        writePdfReport(uri, amountFilter, pendingReportSummaryOnly);
+    }
+
+    private void writePdfReport(Uri uri, int amountFilter, boolean summaryOnly) {
         PdfDocument pdf = new PdfDocument();
         Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         p.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL));
@@ -538,7 +556,7 @@ public class MainActivity extends Activity {
         p.setTextSize(12); p.setTypeface(Typeface.DEFAULT);
         String range = amountFilter < 0 ? "إجمالي كل الفئات" : "فئة " + amountFilter + " ريال";
         c.drawText("النطاق: " + range, w - margin, y, p); y += 20;
-        c.drawText("تاريخ التقرير: " + AppStore.now(), w - margin, y, p); y += 28;
+        c.drawText("نوع التقرير: " + (summaryOnly ? "مختصر" : "مفصل") + " | تاريخ التقرير: " + AppStore.now(), w - margin, y, p); y += 28;
 
         p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextSize(14);
         c.drawText("الملخص", w - margin, y, p); y += 22;
@@ -555,13 +573,76 @@ public class MainActivity extends Activity {
         y += 12;
 
         p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextSize(14);
+        c.drawText(amountFilter < 0 ? "ملخص الفئات" : "ملخص الفئة", w - margin, y, p); y += 18;
+        p.setTypeface(Typeface.DEFAULT); p.setTextSize(10);
+        int pageNo = 1;
+        ArrayList<CategoryItem> catsForReport = AppStore.loadCategories(this);
+        for (CategoryItem cat : catsForReport) {
+            if (amountFilter >= 0 && cat.amount != amountFilter) continue;
+            if (y > h - 130) {
+                p.setTextAlign(Paint.Align.CENTER); p.setTextSize(9);
+                c.drawText("صفحة " + pageNo, w/2, h - 24, p);
+                pdf.finishPage(page);
+                pageNo++;
+                page = pdf.startPage(new PdfDocument.PageInfo.Builder(w, h, pageNo).create());
+                c = page.getCanvas();
+                y = 44;
+                p.setTextAlign(Paint.Align.RIGHT); p.setTextSize(10); p.setTypeface(Typeface.DEFAULT);
+            }
+            int catTotal = AppStore.cardsByAmount(this, cat.amount).size();
+            int catSold = AppStore.soldCount(this, cat.amount);
+            int catAvailable = AppStore.availableCount(this, cat.amount);
+            int catOps = 0;
+            int catIncome = 0;
+            for (OperationLog lg : logs) {
+                if (lg.amount == cat.amount && "تم الإرسال".equals(lg.status)) {
+                    catOps++;
+                    catIncome += lg.amount;
+                }
+            }
+            float left = margin;
+            float top = y;
+            float right = w - margin;
+            float bottom = y + 88;
+            p.setStyle(Paint.Style.STROKE);
+            p.setColor(Color.rgb(135, 108, 190));
+            p.setStrokeWidth(1.2f);
+            c.drawRoundRect(new RectF(left, top, right, bottom), 10, 10, p);
+            p.setStyle(Paint.Style.FILL);
+            p.setColor(Color.BLACK);
+            p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextSize(12);
+            c.drawText("فئة " + cat.amount + " ريال", w - margin - 12, y + 18, p);
+            p.setTypeface(Typeface.DEFAULT); p.setTextSize(10);
+            c.drawText("إجمالي الكروت: " + catTotal + "   |   المباعة: " + catSold + "   |   المتبقية: " + catAvailable, w - margin - 12, y + 38, p);
+            c.drawText("عمليات الإرسال الناجحة: " + catOps + "   |   إجمالي مبلغ الفئة: " + catIncome + " ريال", w - margin - 12, y + 58, p);
+            c.drawText("ملاحظة: تفاصيل السداد والكروت تظهر أسفل التقرير عند اختيار التقرير المفصل.", w - margin - 12, y + 76, p);
+            y += 104;
+        }
+
+        if (summaryOnly) {
+            p.setTextAlign(Paint.Align.CENTER); p.setTextSize(9); p.setTypeface(Typeface.DEFAULT);
+            c.drawText("صفحة " + pageNo, w/2, h - 24, p);
+            pdf.finishPage(page);
+            try {
+                OutputStream out = getContentResolver().openOutputStream(uri);
+                pdf.writeTo(out);
+                if (out != null) out.close();
+                toast("تم حفظ تقرير PDF بنجاح");
+            } catch (Exception e) {
+                toast("فشل حفظ التقرير: " + e.getMessage());
+            } finally {
+                pdf.close();
+            }
+            return;
+        }
+
+        p.setTypeface(Typeface.DEFAULT_BOLD); p.setTextSize(14); p.setColor(Color.BLACK);
         c.drawText("تفاصيل العمليات", w - margin, y, p); y += 22;
         p.setTypeface(Typeface.DEFAULT); p.setTextSize(10);
         if (logs.isEmpty()) {
             c.drawText("لا توجد عمليات ضمن هذا النطاق.", w - margin, y, p); y += 18;
         }
 
-        int pageNo = 1;
         for (OperationLog log : logs) {
             if (y > h - 70) {
                 p.setTextAlign(Paint.Align.CENTER); p.setTextSize(9);
@@ -617,6 +698,15 @@ public class MainActivity extends Activity {
         auto.addView(small("الرسائل الموثوقة: Jawali / Jaib / ONE Cash."));
         content.addView(auto);
 
+        LinearLayout messages = cardBox();
+        messages.addView(tv("مركز رسائل الزبائن", 17, text, true));
+        messages.addView(small("من هنا تعدّل رسالة الكرت ورسالة نفاد الفئة بشكل واضح، وتضيف العروض أو الملاحظات قبل الإرسال."));
+        messages.addView(separator());
+        messages.addView(small("معاينة رسالة الكرت الحالية:"));
+        messages.addView(messagePreviewText(AppStore.buildSuccessMessage(this, 100, "1547013174")));
+        messages.addView(action("فتح مركز تعديل الرسائل", purple, Color.WHITE, v -> showMessageTemplates()));
+        content.addView(messages);
+
         LinearLayout trusted = cardBox();
         trusted.addView(tv("الأسماء الموثوقة لوَن كاش", 17, text, true));
         trusted.addView(small("أضف الاسم كما يظهر في ONE Cash مع رقم الإرسال. المطابقة تكون على الاسم الثلاثي."));
@@ -632,6 +722,178 @@ public class MainActivity extends Activity {
                 .setNegativeButton("إلغاء", null)
                 .show()));
         content.addView(danger);
+    }
+
+    private void showMessageTemplates() {
+        setTab("settings");
+        clear();
+        content.addView(title("مركز تعديل رسائل الزبائن"));
+
+        LinearLayout intro = cardBox();
+        intro.addView(tv("طريقة التعديل", 17, text, true));
+        intro.addView(small("اكتب الرسالة كما تريد أن تصل للزبون. يمكن إضافة عرض أو تنبيه أو ملاحظة في أي سطر. المتغيرات تتبدل تلقائيًا وقت الإرسال."));
+        intro.addView(separator());
+        intro.addView(badge("{amount} = مبلغ الفئة", purpleLight));
+        intro.addView(badge("{card} = رقم الكرت", green));
+        intro.addView(badge("{network} = اسم الشبكة", Color.rgb(41, 167, 255)));
+        intro.addView(badge("{adminPhone} = رقم إدارة الشبكة", orange));
+        content.addView(intro);
+
+        LinearLayout info = cardBox();
+        info.addView(tv("بيانات ثابتة داخل الرسائل", 17, text, true));
+        info.addView(small("اسم الشبكة الحالي: " + AppStore.getNetworkName(this)));
+        info.addView(small("رقم إدارة الشبكة الحالي: " + AppStore.getAdminPhone(this)));
+        LinearLayout infoActions = new LinearLayout(this);
+        infoActions.setOrientation(LinearLayout.HORIZONTAL);
+        infoActions.addView(action("تعديل اسم الشبكة", purple, Color.WHITE, v -> showNetworkNameDialog()), new LinearLayout.LayoutParams(0, -2, 1));
+        infoActions.addView(action("تعديل رقم الإدارة", card2, text, v -> showAdminPhoneDialog()), new LinearLayout.LayoutParams(0, -2, 1));
+        info.addView(infoActions);
+        content.addView(info);
+
+        content.addView(templateBox(true));
+        content.addView(templateBox(false));
+
+        LinearLayout back = cardBox();
+        back.addView(action("رجوع للإعدادات", card2, text, v -> showSettings()));
+        content.addView(back);
+    }
+
+    private TextView messagePreviewText(String value) {
+        TextView preview = tv(value, 14, text, false);
+        preview.setGravity(Gravity.RIGHT);
+        preview.setLineSpacing(4, 1.1f);
+        preview.setPadding(dp(12), dp(10), dp(12), dp(10));
+        preview.setBackground(round(card2, dp(12), Color.argb(35, 255,255,255), dp(1)));
+        return preview;
+    }
+
+    private LinearLayout templateBox(boolean successMessage) {
+        LinearLayout box = cardBox();
+        String titleText = successMessage ? "رسالة إرسال الكرت" : "رسالة نفاد الفئة";
+        String desc = successMessage
+                ? "هذه الرسالة تصل عندما يتم العثور على كرت وإرساله للزبون."
+                : "هذه الرسالة تصل عندما يتم استلام المبلغ لكن لا توجد كروت متاحة من نفس الفئة.";
+        String sample = successMessage
+                ? AppStore.buildSuccessMessage(this, 100, "1547013174")
+                : AppStore.buildNoStockMessage(this, 100);
+
+        box.addView(tv(titleText, 18, text, true));
+        box.addView(small(desc));
+        box.addView(separator());
+        box.addView(small("معاينة على فئة 100 ريال:"));
+        box.addView(messagePreviewText(sample));
+
+        LinearLayout actionsRow = new LinearLayout(this);
+        actionsRow.setOrientation(LinearLayout.HORIZONTAL);
+        actionsRow.addView(action("تعديل النص", purple, Color.WHITE, v -> showMessageTemplateDialog(successMessage)), new LinearLayout.LayoutParams(0, -2, 1));
+        actionsRow.addView(action("استعادة الافتراضي", Color.rgb(82,30,42), Color.WHITE, v -> confirmResetTemplate(successMessage)), new LinearLayout.LayoutParams(0, -2, 1));
+        box.addView(actionsRow);
+        return box;
+    }
+
+    private void confirmResetTemplate(boolean successMessage) {
+        new AlertDialog.Builder(this)
+                .setTitle("استعادة النص الافتراضي")
+                .setMessage("سيتم استبدال النص الحالي بالنص الافتراضي.")
+                .setPositiveButton("استعادة", (d,w) -> {
+                    if (successMessage) AppStore.setSuccessTemplate(this, AppStore.DEFAULT_SUCCESS_TEMPLATE);
+                    else AppStore.setNoStockTemplate(this, AppStore.DEFAULT_NO_STOCK_TEMPLATE);
+                    toast("تمت استعادة النص الافتراضي");
+                    showMessageTemplates();
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
+    private void showNetworkNameDialog() {
+        EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        input.setGravity(Gravity.RIGHT);
+        input.setText(AppStore.getNetworkName(this));
+        new AlertDialog.Builder(this)
+                .setTitle("تعديل اسم الشبكة")
+                .setView(input)
+                .setPositiveButton("حفظ", (d,w) -> {
+                    AppStore.setNetworkName(this, input.getText().toString());
+                    toast("تم حفظ اسم الشبكة");
+                    showMessageTemplates();
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
+    private void showAdminPhoneDialog() {
+        EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_PHONE);
+        input.setGravity(Gravity.RIGHT);
+        input.setText(AppStore.getAdminPhone(this));
+        new AlertDialog.Builder(this)
+                .setTitle("تعديل رقم إدارة الشبكة")
+                .setView(input)
+                .setPositiveButton("حفظ", (d,w) -> {
+                    AppStore.setAdminPhone(this, input.getText().toString());
+                    toast("تم حفظ رقم الإدارة");
+                    showMessageTemplates();
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
+    }
+
+    private void showMessageTemplateDialog(boolean successMessage) {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        layout.setPadding(dp(8), dp(8), dp(8), dp(8));
+
+        TextView help = small(successMessage
+                ? "عدّل رسالة الكرت كما تريد. يمكنك إضافة عرض في آخر الرسالة مثل: عرض خاص: عند شراء كرتين تحصل على خصم."
+                : "عدّل رسالة نفاد الفئة. استخدم {adminPhone} حتى يظهر رقم إدارة الشبكة تلقائيًا.");
+
+        TextView vars = small("المتغيرات المتاحة: {amount}  {card}  {network}  {adminPhone}");
+
+        EditText input = new EditText(this);
+        input.setMinLines(9);
+        input.setGravity(Gravity.TOP | Gravity.RIGHT);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        input.setText(successMessage ? AppStore.getSuccessTemplate(this) : AppStore.getNoStockTemplate(this));
+
+        TextView previewTitle = small("المعاينة:");
+        TextView preview = messagePreviewText(successMessage
+                ? AppStore.applyTemplate(this, input.getText().toString(), 100, "1547013174")
+                : AppStore.applyTemplate(this, input.getText().toString(), 100, ""));
+
+        Button previewBtn = action("تحديث المعاينة", card2, text, v -> {
+            preview.setText(successMessage
+                    ? AppStore.applyTemplate(this, input.getText().toString(), 100, "1547013174")
+                    : AppStore.applyTemplate(this, input.getText().toString(), 100, ""));
+        });
+
+        Button offerBtn = action("إضافة سطر عرض", Color.rgb(50, 70, 55), Color.WHITE, v -> {
+            input.append("\n\nعرض خاص: ");
+            preview.setText(successMessage
+                    ? AppStore.applyTemplate(this, input.getText().toString(), 100, "1547013174")
+                    : AppStore.applyTemplate(this, input.getText().toString(), 100, ""));
+        });
+
+        layout.addView(help);
+        layout.addView(vars);
+        layout.addView(input);
+        layout.addView(previewBtn);
+        if (successMessage) layout.addView(offerBtn);
+        layout.addView(previewTitle);
+        layout.addView(preview);
+
+        new AlertDialog.Builder(this)
+                .setTitle(successMessage ? "تعديل رسالة إرسال الكرت" : "تعديل رسالة نفاد الفئة")
+                .setView(layout)
+                .setPositiveButton("حفظ", (d,w) -> {
+                    String value = input.getText().toString();
+                    if (successMessage) AppStore.setSuccessTemplate(this, value);
+                    else AppStore.setNoStockTemplate(this, value);
+                    toast("تم حفظ نص الرسالة");
+                    showMessageTemplates();
+                })
+                .setNegativeButton("إلغاء", null)
+                .show();
     }
 
     private void showTrustedContacts() {
@@ -706,7 +968,7 @@ public class MainActivity extends Activity {
             importFromUri(data.getData());
         }
         if (requestCode == REQ_PDF && resultCode == RESULT_OK && data != null) {
-            writePdfReport(data.getData(), pendingReportAmount);
+            writePdfReport(data.getData(), pendingReportAmount, pendingReportSummaryOnly);
         }
     }
 
